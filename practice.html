@@ -336,6 +336,18 @@ function onInstResults(results){
   drawInstSkeleton(ctx,results.poseLandmarks,ic.width,ic.height);
 }
 
+// ═══ AUTO POSE DETECTION (for follow mode without instructor landmarks) ═══
+let autoDetectedPose=null,lastAutoDetect=0;
+function autoDetectPose(ua){
+  const now=Date.now();if(now-lastAutoDetect<2000)return;lastAutoDetect=now;
+  let bestPose=null,bestScore=-1;
+  for(const[k,p]of Object.entries(POSES)){
+    const s=computeScore(ua,p.angles);
+    if(s>bestScore){bestScore=s;bestPose=k;}
+  }
+  if(bestScore>50) autoDetectedPose=bestPose;
+}
+
 // ═══ USER POSE PROCESSING ═══
 function onUserResults(results){
   const canvas=document.getElementById('overlay'),video=document.getElementById('webcam');
@@ -343,16 +355,38 @@ function onUserResults(results){
   const ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);
   if(!results.poseLandmarks)return;
   const lm=results.poseLandmarks,ua=computeAngles(lm);
-  // Get reference: instructor angles (follow mode) or static pose (solo mode)
-  let refAngles;
-  if(mode==='follow'&&instAngles){refAngles=instAngles;}
-  else if(mode==='solo'&&selectedPose){refAngles=POSES[selectedPose].angles;}
-  else return;
-  const comp=compareAngles(ua,refAngles);
-  currentScore=computeScore(ua,refAngles);
-  drawSkeleton(ctx,lm,comp,canvas.width,canvas.height);
+
+  // Get reference angles based on mode
+  let refAngles=null;
+  if(mode==='follow'){
+    if(instAngles){
+      // Instructor video file — use real-time instructor angles
+      refAngles=instAngles;
+    } else {
+      // YouTube or no instructor angles yet — auto-detect pose and use reference
+      autoDetectPose(ua);
+      if(autoDetectedPose) refAngles=POSES[autoDetectedPose].angles;
+    }
+  } else if(mode==='solo'&&selectedPose){
+    refAngles=POSES[selectedPose].angles;
+  }
+
+  // ALWAYS draw skeleton — even without reference (just use neutral colors)
+  if(refAngles){
+    const comp=compareAngles(ua,refAngles);
+    currentScore=computeScore(ua,refAngles);
+    drawSkeleton(ctx,lm,comp,canvas.width,canvas.height);
+    updateCorrections(comp);
+  } else {
+    // No reference yet — draw skeleton in neutral white so user sees feedback
+    const neutralComp={};
+    for(const j of Object.keys(JOINTS)) neutralComp[j]={diff:null,misaligned:false};
+    drawSkeleton(ctx,lm,neutralComp,canvas.width,canvas.height);
+    currentScore=0;
+  }
+
   document.getElementById('hudScore').textContent=Math.round(currentScore)+'%';
-  document.getElementById('hudLabel').textContent=sLabel(currentScore);
+  document.getElementById('hudLabel').textContent=refAngles?sLabel(currentScore):'DETECTING...';
   const bar=document.getElementById('scoreBar');bar.style.width=currentScore+'%';bar.style.background=sColor(currentScore);
   const now=Date.now()/1000;
   if(currentScore>=THRESHOLD){if(!holding){holding=true;holdStart=now;}holdSec=now-holdStart;}else{holding=false;holdSec=0;}
@@ -361,12 +395,16 @@ function onUserResults(results){
   document.getElementById('holdArc').style.stroke=hf>=1?'var(--sage)':'var(--warm)';
   document.getElementById('holdPct').textContent=Math.round(hf*100)+'%';
   const badge=document.getElementById('stateBadge');
-  if(currentScore>=85){badge.textContent='EXCELLENT';badge.className='state-badge good';}
+  if(!refAngles){badge.textContent='DETECTING';badge.className='state-badge live';}
+  else if(currentScore>=85){badge.textContent='EXCELLENT';badge.className='state-badge good';}
   else if(currentScore>=THRESHOLD){badge.textContent='GOOD';badge.className='state-badge live';}
   else{badge.textContent='ADJUST';badge.className='state-badge warn';}
-  updateCorrections(comp);
   if(hf>=1&&holdSec<8.5){speak('Excellent! You are perfectly aligned!');document.getElementById('hudMsg').textContent='Perfect alignment!';}
   else if(currentScore>=THRESHOLD){document.getElementById('hudMsg').textContent=`Hold steady... ${Math.round(holdSec)}s / 8s`;}
+  else if(mode==='follow'&&autoDetectedPose&&!instAngles){
+    const det=POSES[autoDetectedPose];
+    document.getElementById('hudMsg').textContent=`Detected: ${det.name} — ${det.steps[Math.floor(Date.now()/8000)%det.steps.length]}`;
+  }
   else if(mode==='solo'&&selectedPose){const ref=POSES[selectedPose];document.getElementById('hudMsg').textContent=ref.steps[Math.floor(Date.now()/8000)%ref.steps.length];}
   else{document.getElementById('hudMsg').textContent='Match the instructor\'s pose';}
 }
