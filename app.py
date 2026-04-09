@@ -219,9 +219,18 @@ def start_yoga():
         try:
             global _yoga_thread
 
+            # Detect cloud deployment (no camera/screen available)
+            is_cloud = os.environ.get("RENDER") or os.environ.get("PORT") and not sys.platform == "win32"
+
             def _yoga_thread_runner():
                 global _yoga_instance
                 try:
+                    if is_cloud:
+                        raise RuntimeError(
+                            "Desktop yoga mode requires a local camera & screen. "
+                            "Use the Practice page instead — it runs AI pose detection "
+                            "directly in your browser!"
+                        )
                     from orchestrator import YogaCorrector
                     # Instantiating the engine with show_debug=True enables the always-on-top native camera mirror
                     proc = YogaCorrector(show_debug=True)
