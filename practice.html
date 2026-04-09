@@ -265,7 +265,7 @@ const JNAMES={left_elbow:"Left Elbow",right_elbow:"Right Elbow",left_shoulder:"L
 // ═══ STATE ═══
 let mode=null,selectedPose=null,selectedLang="en",currentScore=0,holdStart=0,holdSec=0,holding=false,voiceOn=true,lastSpoken=0,lastCorr=0;
 let synth=window.speechSynthesis||null,userPose=null,instPose=null,camera=null;
-let instAngles=null,videoReady=false,frameCount=0;
+let instAngles=null,instLandmarks=null,videoReady=false,frameCount=0;
 
 function dbg(msg){console.log('[YogaAI]',msg);const el=document.getElementById('debugLog');if(el)el.textContent=msg;}
 
@@ -325,11 +325,37 @@ function drawInstSkeleton(ctx,lm,w,h){
 
 function updateCorrections(comp){const n=Date.now();if(n-lastCorr<3000)return;const el=document.getElementById('corrections');el.innerHTML='';const mis=Object.entries(comp).filter(([,v])=>v.misaligned&&v.diff!=null).sort((a,b)=>b[1].diff-a[1].diff).slice(0,3);if(mis.length===0&&currentScore>=THRESHOLD){el.innerHTML='<div class="correction-chip good">Great alignment!</div>';return;}for(const[j,info]of mis){const f=JNAMES[j],v=info.direction==='increase'?'Open':'Bend',cls=info.diff<=TOLERANCE*2?'close':'';el.innerHTML+=`<div class="correction-chip ${cls}">${v} your ${f}</div>`;}if(mis.length>0&&n-lastCorr>6000){const[j,info]=mis[0];speak(`${info.direction==='increase'?'Open':'Bend'} your ${JNAMES[j]} a little more`);lastCorr=n;}}
 
+// ═══ GHOST SKELETON (instructor's pose drawn on user's camera) ═══
+function drawGhostSkeleton(ctx,lm,w,h){
+  // Draw semi-transparent ghost bones
+  ctx.save();
+  ctx.globalAlpha=0.35;
+  ctx.strokeStyle='#5ba8b5'; ctx.lineWidth=3; ctx.setLineDash([8,6]);
+  for(const[i,j]of BONES){
+    const a=lm[i],b=lm[j];
+    if(!a||!b||a.visibility<0.3||b.visibility<0.3)continue;
+    ctx.beginPath(); ctx.moveTo(a.x*w,a.y*h); ctx.lineTo(b.x*w,b.y*h); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // Ghost joint dots
+  ctx.fillStyle='#5ba8b5';
+  for(const def of Object.values(JOINTS)){
+    const l=lm[def.b]; if(!l||l.visibility<0.3)continue;
+    ctx.globalAlpha=0.2; ctx.beginPath(); ctx.arc(l.x*w,l.y*h,10,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=0.5; ctx.beginPath(); ctx.arc(l.x*w,l.y*h,5,0,Math.PI*2); ctx.fill();
+  }
+  // Ghost label
+  ctx.globalAlpha=0.4; ctx.font='500 11px DM Sans,sans-serif'; ctx.fillStyle='#5ba8b5';
+  const head=lm[0]; if(head&&head.visibility>0.3) ctx.fillText('GHOST',head.x*w-15,head.y*h-20);
+  ctx.restore();
+}
+
 // ═══ INSTRUCTOR POSE PROCESSING ═══
 function onInstResults(results){
   if(!results.poseLandmarks)return;
   instAngles=computeAngles(results.poseLandmarks);
-  // Draw instructor skeleton overlay
+  instLandmarks=results.poseLandmarks; // Store for ghost overlay
+  // Draw instructor skeleton on instructor panel
   const ic=document.getElementById('instCanvas'),iv=document.getElementById('instVideo');
   ic.width=iv.videoWidth||640;ic.height=iv.videoHeight||480;
   const ctx=ic.getContext('2d');ctx.clearRect(0,0,ic.width,ic.height);
@@ -371,7 +397,12 @@ function onUserResults(results){
     refAngles=POSES[selectedPose].angles;
   }
 
-  // ALWAYS draw skeleton — even without reference (just use neutral colors)
+  // Draw GHOST skeleton (instructor's pose as translucent overlay on user cam)
+  if(instLandmarks){
+    drawGhostSkeleton(ctx,instLandmarks,canvas.width,canvas.height);
+  }
+
+  // ALWAYS draw user skeleton — even without reference (just use neutral colors)
   if(refAngles){
     const comp=compareAngles(ua,refAngles);
     currentScore=computeScore(ua,refAngles);
