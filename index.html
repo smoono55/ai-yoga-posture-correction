@@ -1527,7 +1527,15 @@
     }
 
     // ── Start yoga ────────────────────────────────────────────────────────────
+    const isCloud = !['localhost','127.0.0.1','0.0.0.0'].some(h => location.hostname.includes(h));
+
     async function startYoga() {
+      // On cloud deployment, redirect to the browser-based practice page
+      if (isCloud) {
+        window.location.href = '/practice';
+        return;
+      }
+
       const btn = document.getElementById('startBtn');
       btn.disabled = true;
       setStatus('running', 'Setting up language and launching...');
